@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>體態紀錄</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F7F5F0;color:#2C2C2A;min-height:100vh;}
+.app{max-width:420px;margin:0 auto;padding:16px 16px 40px;}
+.header{text-align:center;padding:24px 0 14px;}
+.header h1{font-size:20px;font-weight:500;color:#2C2C2A;letter-spacing:.02em;}
+.header p{font-size:13px;color:#888780;margin-top:4px;}
+.status-bar{display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;color:#888780;margin-bottom:20px;}
+.dot{width:7px;height:7px;border-radius:50%;background:#639922;display:inline-block;flex-shrink:0;}
+.dot.loading{background:#EF9F27;animation:pulse 1.2s ease-in-out infinite;}
+.dot.error{background:#E24B4A;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px;}
+.metric{background:#fff;border-radius:10px;padding:14px 8px;text-align:center;border:0.5px solid rgba(0,0,0,.06);}
+.mlabel{font-size:11px;color:#888780;margin-bottom:6px;}
+.mvalue{font-size:24px;font-weight:500;color:#2C2C2A;line-height:1.1;}
+.munit{font-size:11px;color:#B4B2A9;margin-top:2px;}
+.mdelta{font-size:11px;margin-top:5px;}
+.good{color:#3B6D11;}.bad{color:#A32D2D;}.neutral{color:#B4B2A9;}
+.tab-row{display:flex;gap:6px;margin-bottom:12px;}
+.tab{font-size:12px;padding:6px 14px;border-radius:20px;border:0.5px solid #D3D1C7;background:transparent;color:#888780;cursor:pointer;}
+.tab.active{background:#2C2C2A;color:#fff;border-color:#2C2C2A;}
+.chart-wrap{background:#fff;border-radius:14px;padding:16px;margin-bottom:16px;border:0.5px solid rgba(0,0,0,.06);}
+.chart-title{font-size:13px;color:#888780;margin-bottom:12px;}
+.sec-label{font-size:11px;font-weight:500;color:#888780;margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase;}
+.records{background:#fff;border-radius:14px;overflow:hidden;margin-bottom:16px;border:0.5px solid rgba(0,0,0,.06);}
+.rec-row{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr;padding:10px 14px;font-size:13px;border-bottom:0.5px solid #F1EFE8;align-items:center;}
+.rec-row:last-child{border-bottom:none;}
+.rec-row.head{font-size:11px;color:#888780;background:#F7F5F0;}
+.vpill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:12px;font-weight:500;}
+.v-low{background:#EAF3DE;color:#27500A;}
+.v-mid{background:#FAEEDA;color:#633806;}
+.v-high{background:#FCEBEB;color:#791F1F;}
+.empty{text-align:center;padding:40px 20px;color:#B4B2A9;font-size:13px;line-height:1.8;}
+.refresh-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:10px;font-size:13px;border-radius:10px;border:0.5px solid #D3D1C7;background:transparent;color:#888780;cursor:pointer;}
+.refresh-btn:hover{background:#F1EFE8;}
+.last-upd{text-align:center;font-size:11px;color:#B4B2A9;margin-top:10px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <h1>體態紀錄</h1>
+    <p>體重・體脂・內臟脂肪</p>
+  </div>
+  <div class="status-bar">
+    <span class="dot loading" id="dot"></span>
+    <span id="status-text">連線中…</span>
+  </div>
+
+  <div class="metrics">
+    <div class="metric"><div class="mlabel">最新體重</div><div class="mvalue" id="m-w">—</div><div class="munit">kg</div><div class="mdelta neutral" id="d-w">—</div></div>
+    <div class="metric"><div class="mlabel">體脂率</div><div class="mvalue" id="m-f">—</div><div class="munit">%</div><div class="mdelta neutral" id="d-f">—</div></div>
+    <div class="metric"><div class="mlabel">內臟脂肪</div><div class="mvalue" id="m-v">—</div><div class="munit">等級</div><div class="mdelta neutral" id="d-v">—</div></div>
+  </div>
+
+  <div class="tab-row">
+    <button class="tab active" onclick="switchMetric('weight',this)">體重</button>
+    <button class="tab" onclick="switchMetric('fat',this)">體脂</button>
+    <button class="tab" onclick="switchMetric('visceral',this)">內臟脂肪</button>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-title" id="ctitle">體重趨勢（kg）</div>
+    <div style="position:relative;width:100%;height:200px;">
+      <canvas id="myChart"></canvas>
+    </div>
+  </div>
+
+  <div class="sec-label">最近紀錄</div>
+  <div class="records">
+    <div class="rec-row head"><div>日期</div><div>體重</div><div>體脂</div><div>內臟</div></div>
+    <div id="rec-body"><div class="empty">載入中…</div></div>
+  </div>
+
+  <button class="refresh-btn" onclick="loadData()">↻ 重新整理</button>
+  <div class="last-upd" id="last-upd"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script>
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/1-nN_OtLJWfLC0SyBhNaqV8awFENtEHSRCbHSCaPhOI0/export?format=csv&gid=0';
+let rows = [];
+let curMetric = 'weight';
+let chartInst = null;
+
+const mCfg = {
+  weight:   {title:'體重趨勢（kg）',   key:'weight',   color:'#1D9E75', unit:'kg'},
+  fat:      {title:'體脂率趨勢（%）',  key:'fat',      color:'#D85A30', unit:'%'},
+  visceral: {title:'內臟脂肪等級趨勢', key:'visceral', color:'#BA7517', unit:''}
+};
+
+function setDot(s){document.getElementById('dot').className='dot'+(s==='ok'?'':' '+s);}
+function setStatus(t,s='ok'){document.getElementById('status-text').textContent=t;setDot(s);}
+
+async function loadData(){
+  setStatus('連線中…','loading');
+  try{
+    const res = await fetch(CSV_URL);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const text = await res.text();
+    const parsed = Papa.parse(text,{header:true,skipEmptyLines:true});
+    const keys = parsed.meta.fields;
+    rows = parsed.data.map(r=>({
+      date:     String(r[keys[0]]||'').trim(),
+      weight:   parseFloat(r[keys[1]])||null,
+      fat:      parseFloat(r[keys[2]])||null,
+      visceral: parseFloat(r[keys[3]])||null
+    })).filter(r=>r.date).reverse();
+    render();
+    setStatus('已同步 · '+rows.length+' 筆');
+    document.getElementById('last-upd').textContent='更新於 '+new Date().toLocaleTimeString('zh-TW');
+  }catch(e){
+    setStatus('讀取失敗：'+e.message,'error');
+    document.getElementById('rec-body').innerHTML='<div class="empty">無法讀取資料<br>請確認 Google Sheet 已設為「知道連結的任何人可檢視」</div>';
+  }
+}
+
+function dVal(arr,key){
+  const v=arr.filter(r=>r[key]!==null);
+  return v.length<2?null:(v[0][key]-v[1][key]);
+}
+
+function showDelta(val,id){
+  const el=document.getElementById(id);
+  if(val===null){el.textContent='—';el.className='mdelta neutral';return;}
+  el.textContent=(val<0?'▼ ':'▲ +')+Math.abs(val).toFixed(1);
+  el.className='mdelta '+(val<0?'good':'bad');
+}
+
+function render(){
+  if(!rows.length)return;
+  const l=rows[0];
+  document.getElementById('m-w').textContent=l.weight!==null?l.weight.toFixed(1):'—';
+  document.getElementById('m-f').textContent=l.fat!==null?l.fat.toFixed(1):'—';
+  document.getElementById('m-v').textContent=l.visceral!==null?l.visceral.toFixed(0):'—';
+  showDelta(dVal(rows,'weight'),'d-w');
+  showDelta(dVal(rows,'fat'),'d-f');
+  showDelta(dVal(rows,'visceral'),'d-v');
+  renderChart();
+  renderRecords();
+}
+
+function switchMetric(m,btn){
+  curMetric=m;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  renderChart();
+}
+
+function renderChart(){
+  const cfg=mCfg[curMetric];
+  document.getElementById('ctitle').textContent=cfg.title;
+  const pts=rows.slice(0,60).reverse();
+  if(chartInst){chartInst.destroy();}
+  chartInst=new Chart(document.getElementById('myChart'),{
+    type:'line',
+    data:{
+      labels:pts.map(r=>r.date),
+      datasets:[{
+        data:pts.map(r=>r[cfg.key]),
+        borderColor:cfg.color,
+        backgroundColor:cfg.color+'18',
+        borderWidth:2,pointRadius:3,
+        pointBackgroundColor:cfg.color,
+        fill:true,tension:0.35,spanGaps:true
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+(c.raw!==null?Number(c.raw).toFixed(1):'—')+cfg.unit}}},
+      scales:{
+        x:{ticks:{font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:8,color:'#888780'},grid:{color:'rgba(136,135,128,.08)'}},
+        y:{ticks:{font:{size:10},color:'#888780',callback:v=>Number(v).toFixed(1)+cfg.unit},grid:{color:'rgba(136,135,128,.08)'}}
+      }
+    }
+  });
+}
+
+function vpill(v){
+  if(v===null)return'—';
+  const c=v<=9?'v-low':v<=14?'v-mid':'v-high';
+  return'<span class="vpill '+c+'">'+Number(v).toFixed(0)+'</span>';
+}
+
+function renderRecords(){
+  const body=document.getElementById('rec-body');
+  if(!rows.length){body.innerHTML='<div class="empty">無資料</div>';return;}
+  body.innerHTML=rows.slice(0,20).map(r=>
+    '<div class="rec-row">'+
+    '<div style="color:#888780;font-size:12px">'+r.date+'</div>'+
+    '<div>'+(r.weight!==null?r.weight.toFixed(1):'—')+'</div>'+
+    '<div>'+(r.fat!==null?r.fat.toFixed(1)+'%':'—')+'</div>'+
+    '<div>'+vpill(r.visceral)+'</div>'+
+    '</div>'
+  ).join('');
+}
+
+loadData();
+setInterval(loadData, 30000);
+</script>
+</body>
+</html>
