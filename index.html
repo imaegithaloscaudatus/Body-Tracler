@@ -32,7 +32,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .chart-wrap{background:#fff;border-radius:14px;padding:16px 12px 20px;margin-bottom:8px;border:0.5px solid rgba(0,0,0,.06);}
 .chart-title{font-size:13px;color:#888780;margin-bottom:4px;padding:0 4px;}
 .chart-note{font-size:11px;color:#B4B2A9;margin-bottom:12px;padding:0 4px;line-height:1.5;}
-.chart-canvas-wrap{position:relative;width:100%;height:220px;}
+.chart-canvas-wrap{position:relative;width:100%;height:280px;}
 
 .legend-row{display:flex;gap:14px;justify-content:center;margin:14px 0 18px;font-size:11px;color:#888780;flex-wrap:wrap;}
 .legend-item{display:flex;align-items:center;gap:5px;}
@@ -50,12 +50,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .v-high{background:#FCEBEB;color:#791F1F;}
 .empty{text-align:center;padding:40px 20px;color:#B4B2A9;font-size:13px;line-height:1.8;}
 
-.note-list{background:#fff;border-radius:14px;overflow:hidden;margin-bottom:16px;border:0.5px solid rgba(0,0,0,.06);}
-.note-row{display:flex;gap:10px;padding:10px 14px;font-size:13px;border-bottom:0.5px solid #F1EFE8;align-items:flex-start;}
-.note-row:last-child{border-bottom:none;}
-.note-date{color:#888780;font-size:11px;white-space:nowrap;padding-top:1px;min-width:64px;}
-.note-text{color:#2C2C2A;}
-.note-icon{color:#BA7517;flex-shrink:0;}
 
 .goal-card{background:#FBF7EE;border:0.5px solid #E8DCC4;border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:12px;color:#7A6326;line-height:1.7;}
 .goal-card b{color:#5C4A1C;}
@@ -97,9 +91,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="legend-row" id="legend-row"></div>
   </div>
 
-  <div class="sec-label">事件記錄</div>
-  <div class="note-list" id="note-list"><div class="empty">尚無備註紀錄</div></div>
-
   <div class="sec-label">最近紀錄</div>
   <div class="records">
     <div class="rec-row head"><div>日期</div><div>體重</div><div>體脂</div><div>內臟</div></div>
@@ -112,6 +103,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/date-fns@2.30.0/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script>
 const SHEET_ID = '1-nN_OtLJWfLC0SyBhNaqV8awFENtEHSRCbHSCaPhOI0';
 const RECORD_CSV = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
@@ -215,7 +208,6 @@ function render(){
 
   renderGoalCard(l);
   renderChart();
-  renderNotes();
   renderRecords(sorted);
 }
 
@@ -235,126 +227,190 @@ function switchMetric(m,btn){
   renderChart();
 }
 
+// 自訂 Chart.js plugin：在資料點旁畫小箭頭+文字標註事件
+const eventAnnotationPlugin = {
+  id: 'eventAnnotation',
+  afterDatasetsDraw(chart) {
+    const notes = chart.config._eventNotes;
+    if (!notes || !notes.length) return;
+    const { ctx } = chart;
+    const meta = chart.getDatasetMeta(0);
+    ctx.save();
+    notes.forEach((n, i) => {
+      const point = meta.data[n.idx];
+      if (!point) return;
+      const x = point.x, y = point.y;
+      // 交錯上下排列避免重疊
+      const dirUp = i % 2 === 0;
+      const labelY = dirUp ? y - 34 : y + 34;
+      const lineEndY = dirUp ? y - 10 : y + 10;
+
+      // 小箭頭線
+      ctx.strokeStyle = '#BA7517';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, lineEndY);
+      ctx.lineTo(x, labelY + (dirUp ? 10 : -10));
+      ctx.stroke();
+
+      // 箭頭三角
+      ctx.fillStyle = '#BA7517';
+      ctx.beginPath();
+      ctx.moveTo(x, lineEndY);
+      ctx.lineTo(x - 3, lineEndY + (dirUp ? 5 : -5));
+      ctx.lineTo(x + 3, lineEndY + (dirUp ? 5 : -5));
+      ctx.closePath();
+      ctx.fill();
+
+      // 文字
+      ctx.font = '10px -apple-system, sans-serif';
+      ctx.fillStyle = '#7A6326';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = dirUp ? 'bottom' : 'top';
+      ctx.fillText(n.text, x, labelY + (dirUp ? 10 : -10));
+    });
+    ctx.restore();
+  }
+};
+
 function renderChart(){
   const cfg=mCfg[curMetric];
   document.getElementById('ctitle').textContent=cfg.title;
 
+  // 完整日期集合：所有有資料的日期 + 所有備註日期
   const allDates = [...new Set([
     ...dataRows.map(r=>r.dateStr),
     ...noteRows.map(r=>r.dateStr)
   ])];
   const dateMap = {};
   allRows.forEach(r=>{ dateMap[r.dateStr] = r; });
-  const sortedDates = allDates
+  let sortedEntries = allDates
     .map(d=>({d, obj: dateMap[d].dateObj}))
     .sort((a,b)=>a.obj-b.obj)
-    .map(x=>x.d)
     .slice(-90);
 
-  const values = sortedDates.map(d => {
+  // {x: timestamp, y: value} 格式，搭配 time scale 達到「等距時間」呈現
+  const points = sortedEntries.map(({d,obj}) => {
     const row = dateMap[d];
-    return row[cfg.key] !== null && row[cfg.key] !== undefined ? row[cfg.key] : null;
+    const v = row[cfg.key];
+    return { x: obj.getTime(), y: (v!==null && v!==undefined) ? v : null, dateStr: d };
   });
 
-  const noteAnnotations = sortedDates.map((d,i) => dateMap[d].note ? {idx:i, text:dateMap[d].note} : null).filter(Boolean);
-
-  let goalDataset = null;
+  // 找出目標延伸點
+  let goalPoint = null;
   if(goal && curMetric==='weight'){
     const lastValid = [...dataRows].filter(r=>r.weight!==null).sort((a,b)=>b.dateObj-a.dateObj)[0];
     if(lastValid && goal.dateObj > lastValid.dateObj){
-      let extendedDates = [...sortedDates];
-      let goalDateStr = goal.dateStr;
-      if(!extendedDates.includes(goalDateStr)){
-        extendedDates.push(goalDateStr);
-      }
-      const startIdx = extendedDates.indexOf(lastValid.dateStr);
-      const endIdx = extendedDates.indexOf(goalDateStr);
-      const goalArr = new Array(extendedDates.length).fill(null);
-      if(startIdx>=0 && endIdx>startIdx){
-        goalArr[startIdx] = lastValid.weight;
-        goalArr[endIdx] = goal.weight;
-      }
-      goalDataset = { dates: extendedDates, values: goalArr };
+      goalPoint = { x: goal.dateObj.getTime(), y: goal.weight, startX: lastValid.dateObj.getTime(), startY: lastValid.weight };
     }
   }
 
-  const finalLabels = goalDataset ? goalDataset.dates : sortedDates;
-  const finalValues = goalDataset ? sortedDates.map((d,i)=>values[i]).concat(new Array(finalLabels.length - sortedDates.length).fill(null)) : values;
+  // 將連續真實資料拆成「實測線段」（直線連接，忠實呈現）與「插補線段」（缺資料時平滑連接）
+  // 作法：建立單一 dataset，但用 segment 設定依資料是否相鄰（時間差是否等於最小間隔）決定樣式
+  const validIdx = points.map((p,i)=>p.y!==null?i:null).filter(i=>i!==null);
+  // 標記每個 segment 是否為「真實相鄰量測」：若兩端點之間沒有其他 null 隔開即視為真實連續
+  const segGapDays = [];
+  for(let i=0;i<validIdx.length-1;i++){
+    const a = validIdx[i], b = validIdx[i+1];
+    const isAdjacent = (b - a) === 1; // 中間沒有其他資料點被跳過（無論有無備註列）
+    const daysBetween = (points[b].x - points[a].x) / 86400000;
+    segGapDays.push({from:a, to:b, isAdjacent, daysBetween});
+  }
 
   if(chartInst){chartInst.destroy();}
 
-  const datasets = [{
+  const mainDataset = {
     label: cfg.title,
-    data: finalValues,
+    data: points.map(p=>({x:p.x, y:p.y})),
     borderColor: cfg.color,
     backgroundColor: cfg.color+'18',
     borderWidth: 2.5,
-    pointRadius: finalValues.map(v=>v!==null?3:0),
+    pointRadius: points.map(p=>p.y!==null?4:0),
+    pointHoverRadius: 5,
     pointBackgroundColor: cfg.color,
     fill: true,
-    tension: 0.4,
     spanGaps: true,
-    cubicInterpolationMode: 'monotone'
-  }];
+    segment: {
+      // 缺值區間（時間跨距明顯大於一般量測間隔）用平滑曲線；緊鄰真實點之間用直線忠實呈現
+      tension: (ctx) => {
+        const seg = segGapDays.find(s => points[s.from].x === ctx.p0.parsed.x && points[s.to].x === ctx.p1.parsed.x);
+        if(!seg) return 0;
+        return seg.daysBetween > 3 ? 0.35 : 0; // 超過3天無資料才視為「缺值區段」做平滑插值
+      }
+    }
+  };
 
-  if(goalDataset){
+  const datasets = [mainDataset];
+
+  if(goalPoint){
     datasets.push({
       label: '目標（等速參考）',
-      data: goalDataset.values,
+      data: [
+        {x: goalPoint.startX, y: goalPoint.startY},
+        {x: goalPoint.x, y: goalPoint.y}
+      ],
       borderColor: '#B4B2A9',
       borderDash: [5,4],
       borderWidth: 1.5,
       pointRadius: 0,
       fill: false,
-      spanGaps: true,
       tension: 0
     });
   }
 
+  // 事件標註：找出每個備註對應在 points 陣列中的 index
+  const eventNotes = points.map((p,i) => {
+    const row = dateMap[p.dateStr];
+    return row && row.note ? {idx:i, text:row.note} : null;
+  }).filter(Boolean);
+
+  const allX = points.map(p=>p.x).concat(goalPoint ? [goalPoint.x] : []);
+  const minX = Math.min(...allX), maxX = Math.max(...allX);
+  const span = maxX - minX;
+
   chartInst=new Chart(document.getElementById('myChart'),{
     type:'line',
-    data:{ labels: finalLabels, datasets },
+    data:{ datasets },
+    plugins: [eventAnnotationPlugin],
     options:{
       responsive:true,maintainAspectRatio:false,
+      layout:{ padding:{ top: 36, bottom: 36 } },
       plugins:{
         legend:{display:false},
         tooltip:{
           callbacks:{
-            label: c => {
-              if(c.raw===null) return null;
-              const label = c.dataset.label==='目標（等速參考）' ? '目標 ' : '';
-              return ' '+label+Number(c.raw).toFixed(1)+cfg.unit;
+            title: (items) => {
+              const ts = items[0]?.parsed?.x;
+              return ts ? new Date(ts).toLocaleDateString('zh-TW') : '';
             },
-            afterBody: (items) => {
-              const idx = items[0]?.dataIndex;
-              const dStr = finalLabels[idx];
-              const row = dateMap[dStr];
-              return row && row.note ? ['📍 '+row.note] : [];
+            label: c => {
+              if(c.raw===null || c.raw.y===null || c.raw.y===undefined) return null;
+              const label = c.dataset.label==='目標（等速參考）' ? '目標 ' : '';
+              return ' '+label+Number(c.raw.y).toFixed(1)+cfg.unit;
             }
           }
         }
       },
       scales:{
-        x:{ticks:{font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:8,color:'#888780'},grid:{color:'rgba(136,135,128,.08)'}},
-        y:{ticks:{font:{size:10},color:'#888780',callback:v=>Number(v).toFixed(1)+cfg.unit},grid:{color:'rgba(136,135,128,.08)'}}
+        x:{
+          type:'time',
+          time:{ unit: span > 1000*86400000 ? 'month' : (span > 60*86400000 ? 'month' : 'day'), tooltipFormat:'yyyy/M/d' },
+          min: minX, max: maxX,
+          ticks: { font:{size:10}, color:'#888780', maxRotation:45, autoSkip:true, maxTicksLimit:8 },
+          grid: { color:'rgba(136,135,128,.08)' }
+        },
+        y:{ ticks:{font:{size:10},color:'#888780',callback:v=>Number(v).toFixed(1)+cfg.unit}, grid:{color:'rgba(136,135,128,.08)'} }
       }
     }
   });
+  chartInst.config._eventNotes = eventNotes;
+  chartInst.update();
 
   const legendWrap = document.getElementById('legend-row');
   let legendHtml = '<div class="legend-item"><span class="legend-line" style="background:'+cfg.color+'"></span>實測趨勢</div>';
-  if(goalDataset) legendHtml += '<div class="legend-item"><span class="legend-line" style="background:#B4B2A9;border-top:2px dashed #B4B2A9;height:0"></span>目標參考線（非真實路徑）</div>';
-  if(noteAnnotations.length) legendHtml += '<div class="legend-item">📍 事件標記</div>';
+  if(goalPoint) legendHtml += '<div class="legend-item"><span class="legend-line" style="background:#B4B2A9;border-top:2px dashed #B4B2A9;height:0"></span>目標參考線（非真實路徑）</div>';
+  if(eventNotes.length) legendHtml += '<div class="legend-item">↑ 事件標記</div>';
   legendWrap.innerHTML = legendHtml;
-}
-
-function renderNotes(){
-  const wrap = document.getElementById('note-list');
-  if(!noteRows.length){ wrap.innerHTML='<div class="empty">尚無備註紀錄</div>'; return; }
-  const sorted = [...noteRows].sort((a,b)=>b.dateObj-a.dateObj);
-  wrap.innerHTML = sorted.map(r=>
-    '<div class="note-row"><span class="note-icon">📍</span><span class="note-date">'+r.dateStr+'</span><span class="note-text">'+r.note+'</span></div>'
-  ).join('');
 }
 
 function vpill(v){
