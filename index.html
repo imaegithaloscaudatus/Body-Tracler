@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>體態紀錄</title>
+<title>大雀の健康旅程</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F7F5F0;color:#2C2C2A;min-height:100vh;}
@@ -67,7 +67,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <body>
 <div class="app">
   <div class="header">
-    <h1>體態紀錄</h1>
+    <h1>大雀の健康旅程</h1>
     <p>體重・體脂・內臟脂肪</p>
   </div>
   <div class="status-bar">
@@ -260,7 +260,7 @@ function renderGoalCard(latest){
   const daysLeft = Math.round((goal.dateObj - new Date())/86400000);
   const toLose = (latest.weight - goal.weight).toFixed(1);
   if(daysLeft <= 0 || toLose <= 0){ wrap.innerHTML=''; return; }
-  wrap.innerHTML = '<div class="goal-card">目標：<b>'+goal.dateStr+' 前達到 '+goal.weight+'kg</b>（還需 '+daysLeft+' 天，目前需再降 '+toLose+'kg）<br>圖上虛線為「等速假設」的參考線，僅供對照進度，<b>實際減脂過程本來就不是直線</b>，停滯期、回升都正常，請以長期趨勢為準。</div>';
+  wrap.innerHTML = '<div class="goal-card">目標：<b>'+goal.dateStr+' 前達到 '+goal.weight+'kg</b>（還有 '+daysLeft+' 天，Gap '+toLose+'kg）<br>圖上虛線為「等速假設」的參考線，僅供對照進度，<b>實際減脂過程本來就不是直線</b>，停滯期、回升都正常，請以長期趨勢為準。</div>';
 }
 
 function switchMetric(m,btn){
