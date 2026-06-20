@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>大雀の健康旅程</title>
+<title>體態紀錄</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F7F5F0;color:#2C2C2A;min-height:100vh;}
@@ -67,7 +67,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <body>
 <div class="app">
   <div class="header">
-    <h1>大雀の健康旅程</h1>
+    <h1>體態紀錄</h1>
     <p>體重・體脂・內臟脂肪</p>
   </div>
   <div class="status-bar">
@@ -260,7 +260,7 @@ function renderGoalCard(latest){
   const daysLeft = Math.round((goal.dateObj - new Date())/86400000);
   const toLose = (latest.weight - goal.weight).toFixed(1);
   if(daysLeft <= 0 || toLose <= 0){ wrap.innerHTML=''; return; }
-  wrap.innerHTML = '<div class="goal-card">目標：<b>'+goal.dateStr+' 前達到 '+goal.weight+'kg</b>（還有 '+daysLeft+' 天，Gap '+toLose+'kg）<br>圖上虛線為「等速假設」的參考線，僅供對照進度，<b>實際減脂過程本來就不是直線</b>，停滯期、回升都正常，請以長期趨勢為準。</div>';
+  wrap.innerHTML = '<div class="goal-card">目標：<b>'+goal.dateStr+' 前達到 '+goal.weight+'kg</b>（還需 '+daysLeft+' 天，目前需再降 '+toLose+'kg）<br>圖上虛線為「等速假設」的參考線，僅供對照進度，<b>實際減脂過程本來就不是直線</b>，停滯期、回升都正常，請以長期趨勢為準。</div>';
 }
 
 function switchMetric(m,btn){
@@ -271,6 +271,23 @@ function switchMetric(m,btn){
 }
 
 // 自訂 Chart.js plugin：在資料點旁畫小箭頭+文字標註事件
+// 給定一組 {x,y}（y 已過濾為非 null）的真實資料點，與一個查詢 x，回傳曲線通過該 x 時的插值 y
+// 若查詢點在資料範圍之外（早於第一筆或晚於最後一筆），回傳最近端點的 y（不外推）
+function interpolateY(validPoints, queryX){
+  if(!validPoints.length) return null;
+  if(queryX <= validPoints[0].x) return validPoints[0].y;
+  if(queryX >= validPoints[validPoints.length-1].x) return validPoints[validPoints.length-1].y;
+  for(let i=0;i<validPoints.length-1;i++){
+    const a = validPoints[i], b = validPoints[i+1];
+    if(queryX >= a.x && queryX <= b.x){
+      if(b.x === a.x) return a.y;
+      const ratio = (queryX - a.x) / (b.x - a.x);
+      return a.y + (b.y - a.y) * ratio;
+    }
+  }
+  return null;
+}
+
 const eventAnnotationPlugin = {
   id: 'eventAnnotation',
   afterDatasetsDraw(chart) {
@@ -291,13 +308,9 @@ const eventAnnotationPlugin = {
       if(n.x < xScale.min || n.x > xScale.max) return;
       const x = xScale.getPixelForValue(n.x);
 
-      // 若該點有實際數值，箭頭從該點出發；若只有備註（無體重值），固定畫在圖表上緣附近
-      let anchorY;
-      if(n.y !== null && n.y !== undefined){
-        anchorY = yScale.getPixelForValue(n.y);
-      } else {
-        anchorY = chartArea.top + 14;
-      }
+      // 若該點有實際數值，箭頭從該點出發；若只有備註（無體重值），指向曲線在該時間點的插值高度
+      const yValue = (n.y !== null && n.y !== undefined) ? n.y : interpolateY(n.curvePoints, n.x);
+      const anchorY = (yValue !== null && yValue !== undefined) ? yScale.getPixelForValue(yValue) : chartArea.top + 14;
 
       const dirUp = i % 2 === 0;
       const labelY = dirUp ? anchorY - 30 : anchorY + 30;
@@ -429,7 +442,7 @@ function renderChart(){
 
   const eventNotes = points.map((p)=>{
     const row = dateMap[p.dateStr];
-    return row && row.note ? {x:p.x, y:p.y, text:row.note} : null;
+    return row && row.note ? {x:p.x, y:p.y, text:row.note, curvePoints: validPoints} : null;
   }).filter(Boolean);
 
   // 完整資料範圍（含目標延伸），供 zoom 限制邊界用
