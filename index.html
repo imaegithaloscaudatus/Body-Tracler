@@ -121,8 +121,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <script>
 const SHEET_ID = '1-nN_OtLJWfLC0SyBhNaqV8awFENtEHSRCbHSCaPhOI0';
-const RECORD_CSV = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
-const GOAL_CSV   = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=1142524404`;
+const RECORD_GVIZ = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=0`;
+const GOAL_GVIZ   = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=1142524404`;
 
 let allRows = [];
 let dataRows = [];
@@ -140,33 +140,63 @@ const mCfg = {
 function setDot(s){document.getElementById('dot').className='dot'+(s==='ok'?'':' '+s);}
 function setStatus(t,s='ok'){document.getElementById('status-text').textContent=t;setDot(s);}
 
-function parseDate(str){
-  const d = new Date(str.replace(/\//g,'-'));
+// gviz 回傳的日期儲存格格式為 "Date(2026,3,10)"（月份從0起算），數字格式為原始數值
+function parseGvizDate(cell){
+  if(!cell || cell.v===null || cell.v===undefined) return null;
+  const v = cell.v;
+  if(typeof v === 'string' && v.startsWith('Date(')){
+    const parts = v.slice(5,-1).split(',').map(Number);
+    return new Date(parts[0], parts[1], parts[2]);
+  }
+  // 萬一該欄被當成純文字（非日期型別儲存格），退而求其次嘗試解析 f 欄位顯示字串或 v
+  const fallback = cell.f || String(v);
+  const d = new Date(String(fallback).replace(/\//g,'-'));
   return isNaN(d) ? null : d;
 }
 
-async function fetchCSV(url){
+function gvizCellNum(cell){
+  if(!cell || cell.v===null || cell.v===undefined || cell.v==='') return null;
+  const n = Number(cell.v);
+  return isNaN(n) ? null : n;
+}
+
+function gvizCellStr(cell){
+  if(!cell || cell.v===null || cell.v===undefined) return '';
+  return String(cell.v).trim();
+}
+
+function formatDateStr(d){
+  if(!d) return '';
+  return (d.getMonth()+1)+'/'+d.getDate();
+}
+
+async function fetchGviz(url){
   const res = await fetch(url);
   if(!res.ok) throw new Error('HTTP '+res.status);
   const text = await res.text();
-  return Papa.parse(text,{header:true,skipEmptyLines:true});
+  // gviz 回傳格式為 google.visualization.Query.setResponse({...}); 需要剝除前後綴
+  const match = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/);
+  if(!match) throw new Error('無法解析資料格式');
+  return JSON.parse(match[1]);
 }
 
 async function loadData(){
   setStatus('連線中…','loading');
   try{
-    const recParsed = await fetchCSV(RECORD_CSV);
-    const keys = recParsed.meta.fields;
+    const recJson = await fetchGviz(RECORD_GVIZ);
+    const recRows = recJson.table.rows || [];
 
-    allRows = recParsed.data.map(r=>{
-      const dateRaw = String(r[keys[0]]||'').trim();
+    allRows = recRows.map(row=>{
+      const c = row.c || [];
+      const dateObj = parseGvizDate(c[0]);
+      const dateStr = dateObj ? formatDateStr(dateObj) : '';
       return {
-        dateStr: dateRaw,
-        dateObj: parseDate(dateRaw),
-        weight:   r[keys[1]] !== '' && r[keys[1]] != null ? parseFloat(r[keys[1]]) : null,
-        fat:      r[keys[2]] !== '' && r[keys[2]] != null ? parseFloat(r[keys[2]]) : null,
-        visceral: r[keys[3]] !== '' && r[keys[3]] != null ? parseFloat(r[keys[3]]) : null,
-        note:     keys[4] ? String(r[keys[4]]||'').trim() : ''
+        dateStr,
+        dateObj,
+        weight:   gvizCellNum(c[1]),
+        fat:      gvizCellNum(c[2]),
+        visceral: gvizCellNum(c[3]),
+        note:     gvizCellStr(c[4])
       };
     }).filter(r=>r.dateStr && r.dateObj)
       .sort((a,b)=>a.dateObj-b.dateObj);
@@ -175,16 +205,15 @@ async function loadData(){
     noteRows = allRows.filter(r=>r.note);
 
     try{
-      const goalParsed = await fetchCSV(GOAL_CSV);
-      const gKeys = goalParsed.meta.fields;
-      if(goalParsed.data.length && goalParsed.data[0][gKeys[0]]){
-        const g = goalParsed.data[0];
-        goal = {
-          dateStr: String(g[gKeys[0]]).trim(),
-          dateObj: parseDate(String(g[gKeys[0]])),
-          weight: parseFloat(g[gKeys[1]])
-        };
-        if(!goal.dateObj || isNaN(goal.weight)) goal = null;
+      const goalJson = await fetchGviz(GOAL_GVIZ);
+      const goalRows = goalJson.table.rows || [];
+      if(goalRows.length){
+        const gc = goalRows[0].c || [];
+        const gDate = parseGvizDate(gc[0]);
+        const gWeight = gvizCellNum(gc[1]);
+        if(gDate && gWeight!==null){
+          goal = { dateStr: formatDateStr(gDate), dateObj: gDate, weight: gWeight };
+        } else { goal = null; }
       } else { goal = null; }
     }catch(e){ goal = null; }
 
@@ -247,27 +276,40 @@ const eventAnnotationPlugin = {
   afterDatasetsDraw(chart) {
     const notes = chart.config._eventNotes;
     if (!notes || !notes.length) return;
-    const { ctx } = chart;
-    const meta = chart.getDatasetMeta(0);
-    ctx.save();
-    notes.forEach((n, i) => {
-      const point = meta.data[n.idx];
-      if (!point) return;
-      const x = point.x, y = point.y;
-      // 交錯上下排列避免重疊
-      const dirUp = i % 2 === 0;
-      const labelY = dirUp ? y - 34 : y + 34;
-      const lineEndY = dirUp ? y - 10 : y + 10;
+    const { ctx, chartArea } = chart;
+    const xScale = chart.scales.x;
+    const yScale = chart.scales.y;
+    if(!xScale || !yScale) return;
 
-      // 小箭頭線
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(chartArea.left, chartArea.top - 40, chartArea.width, chartArea.height + 80);
+    ctx.clip();
+
+    notes.forEach((n, i) => {
+      // 該日期是否在目前可視 X 範圍內；不在範圍內就不畫，避免畫到圖外
+      if(n.x < xScale.min || n.x > xScale.max) return;
+      const x = xScale.getPixelForValue(n.x);
+
+      // 若該點有實際數值，箭頭從該點出發；若只有備註（無體重值），固定畫在圖表上緣附近
+      let anchorY;
+      if(n.y !== null && n.y !== undefined){
+        anchorY = yScale.getPixelForValue(n.y);
+      } else {
+        anchorY = chartArea.top + 14;
+      }
+
+      const dirUp = i % 2 === 0;
+      const labelY = dirUp ? anchorY - 30 : anchorY + 30;
+      const lineEndY = dirUp ? anchorY - 8 : anchorY + 8;
+
       ctx.strokeStyle = '#BA7517';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(x, lineEndY);
-      ctx.lineTo(x, labelY + (dirUp ? 10 : -10));
+      ctx.lineTo(x, labelY + (dirUp ? 9 : -9));
       ctx.stroke();
 
-      // 箭頭三角
       ctx.fillStyle = '#BA7517';
       ctx.beginPath();
       ctx.moveTo(x, lineEndY);
@@ -276,12 +318,11 @@ const eventAnnotationPlugin = {
       ctx.closePath();
       ctx.fill();
 
-      // 文字
       ctx.font = '10px -apple-system, sans-serif';
       ctx.fillStyle = '#7A6326';
       ctx.textAlign = 'center';
       ctx.textBaseline = dirUp ? 'bottom' : 'top';
-      ctx.fillText(n.text, x, labelY + (dirUp ? 10 : -10));
+      ctx.fillText(n.text, x, labelY + (dirUp ? 9 : -9));
     });
     ctx.restore();
   }
@@ -331,6 +372,7 @@ function renderChart(){
   });
 
   let goalPoint = null;
+  let goalStartDateStr = null;
   if(goal && curMetric==='weight'){
     const lastValid = [...dataRows].filter(r=>r.weight!==null).sort((a,b)=>b.dateObj-a.dateObj)[0];
     if(lastValid && goal.dateObj > lastValid.dateObj){
@@ -339,6 +381,7 @@ function renderChart(){
         startX: (lastValid.dateObj.getTime()-baseTime)/dayMs, startY: lastValid.weight,
         dateStr: goal.dateStr, obj: goal.dateObj
       };
+      goalStartDateStr = lastValid.dateStr;
     }
   }
 
@@ -384,9 +427,9 @@ function renderChart(){
     });
   }
 
-  const eventNotes = points.map((p,i)=>{
+  const eventNotes = points.map((p)=>{
     const row = dateMap[p.dateStr];
-    return row && row.note ? {idx:i, text:row.note} : null;
+    return row && row.note ? {x:p.x, y:p.y, text:row.note} : null;
   }).filter(Boolean);
 
   // 完整資料範圍（含目標延伸），供 zoom 限制邊界用
@@ -413,9 +456,14 @@ function renderChart(){
         tooltip:{
           callbacks:{
             title:(items)=>{
-              const xVal = items[0]?.parsed?.x;
-              const dateObj = new Date(baseTime + xVal*dayMs);
-              return dateObj.toLocaleDateString('zh-TW');
+              const idx = items[0]?.dataIndex;
+              if(idx===undefined || idx===null) return '';
+              const ds = items[0].dataset.label;
+              if(ds==='目標（等速參考）'){
+                return idx===0 ? goalStartDateStr : goalPoint.dateStr;
+              }
+              const p = points[idx];
+              return p ? p.obj.toLocaleDateString('zh-TW') : '';
             },
             label:c=>{
               if(c.raw===null||c.raw.y===null||c.raw.y===undefined) return null;
