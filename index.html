@@ -211,8 +211,9 @@ async function loadData(){
         const gc = goalRows[0].c || [];
         const gDate = parseGvizDate(gc[0]);
         const gWeight = gvizCellNum(gc[1]);
+        const gFat = gvizCellNum(gc[2]);
         if(gDate && gWeight!==null){
-          goal = { dateStr: formatDateStr(gDate), dateObj: gDate, weight: gWeight };
+          goal = { dateStr: formatDateStr(gDate), dateObj: gDate, weight: gWeight, fat: gFat };
         } else { goal = null; }
       } else { goal = null; }
     }catch(e){ goal = null; }
@@ -260,7 +261,8 @@ function renderGoalCard(latest){
   const daysLeft = Math.round((goal.dateObj - new Date())/86400000);
   const toLose = (latest.weight - goal.weight).toFixed(1);
   if(daysLeft <= 0 || toLose <= 0){ wrap.innerHTML=''; return; }
-  wrap.innerHTML = '<div class="goal-card">目標：<b>'+goal.dateStr+' 前達到 '+goal.weight+'kg</b>（還有 '+daysLeft+' 天，目前差距 '+toLose+'kg）<br>圖上虛線為「等速假設」的參考線，僅供對照進度，<b>實際減脂過程本來就不是直線</b>，停滯期、回升都正常，請以長期趨勢為準。</div>';
+  const fullDateStr = goal.dateObj.getFullYear()+'/'+(goal.dateObj.getMonth()+1)+'/'+goal.dateObj.getDate();
+  wrap.innerHTML = '<div class="goal-card">目標：<b>'+fullDateStr+'前達到 '+goal.weight+'kg</b>（還有 '+daysLeft+' 天，目前差距 '+toLose+'kg）<br>圖上虛線為「等速假設」的參考線，僅供對照進度，<b>實際減脂過程本來就不是直線</b>，停滯期、回升都正常，請以長期趨勢為準。</div>';
 }
 
 function switchMetric(m,btn){
@@ -386,12 +388,15 @@ function renderChart(){
 
   let goalPoint = null;
   let goalStartDateStr = null;
-  if(goal && curMetric==='weight'){
-    const lastValid = [...dataRows].filter(r=>r.weight!==null).sort((a,b)=>b.dateObj-a.dateObj)[0];
+  const goalValueForMetric = curMetric==='weight' ? (goal&&goal.weight!==null?goal.weight:null)
+                            : curMetric==='fat' ? (goal&&goal.fat!==null?goal.fat:null)
+                            : null; // 內臟脂肪暫不支援目標線
+  if(goal && goalValueForMetric!==null){
+    const lastValid = [...dataRows].filter(r=>r[cfg.key]!==null).sort((a,b)=>b.dateObj-a.dateObj)[0];
     if(lastValid && goal.dateObj > lastValid.dateObj){
       goalPoint = {
-        x: (goal.dateObj.getTime()-baseTime)/dayMs, y: goal.weight,
-        startX: (lastValid.dateObj.getTime()-baseTime)/dayMs, startY: lastValid.weight,
+        x: (goal.dateObj.getTime()-baseTime)/dayMs, y: goalValueForMetric,
+        startX: (lastValid.dateObj.getTime()-baseTime)/dayMs, startY: lastValid[cfg.key],
         dateStr: goal.dateStr, obj: goal.dateObj
       };
       goalStartDateStr = lastValid.dateStr;
